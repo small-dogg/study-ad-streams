@@ -1,8 +1,10 @@
 package com.study.adstreams.infrastructure.config;
 
+import com.study.adstreams.infrastructure.stream.handler.StreamErrorHandler;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
+import org.apache.kafka.streams.errors.DeserializationExceptionHandler;
 import org.apache.kafka.streams.kstream.Consumed;
 import org.apache.kafka.streams.kstream.KStream;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,6 +40,9 @@ public class KafkaStreamsConfig {
         props.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
         props.put(StreamsConfig.CACHE_MAX_BYTES_BUFFERING_CONFIG, 10485760);
         props.put(StreamsConfig.STATE_DIR_CONFIG, "/tmp/kafka-streams");
+        
+        // 에러 핸들러 설정
+        props.put(StreamsConfig.DEFAULT_DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG, StreamErrorHandler.class);
 
         return new KafkaStreamsConfiguration(props);
     }

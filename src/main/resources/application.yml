@@ -3,14 +3,21 @@ spring:
     name: ad-streams
 
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: localhost:30092
     
     streams:
       application-id: ad-streams-app
       default-key-serde: org.apache.kafka.common.serialization.Serdes$StringSerde
       default-value-serde: org.springframework.kafka.support.serializer.JsonSerde
-      input-topic: input-topic
-      output-topic: output-topic
+      
+      # 토픽 설정
+      topics:
+        impressed: ad-impressed
+        clicked: ad-clicked
+        partner-billing: partner-billing-aggregation
+        partner-group-metrics: partner-group-metrics
+        display-metrics: display-metrics
+        dlq: ad-streams-dlq  # Dead Letter Queue
       
       properties:
         # Processing guarantees
@@ -30,6 +37,9 @@ spring:
         
         # Number of threads
         num.stream.threads: 1
+        
+        # Error handling
+        default.deserialization.exception.handler: com.study.adstreams.infrastructure.stream.handler.StreamErrorHandler
 
 server:
   port: 8080
@@ -40,3 +50,4 @@ logging:
     com.study: DEBUG
     org.apache.kafka: INFO
     org.springframework.kafka: INFO
+    com.study.adstreams.infrastructure.stream.handler: DEBUG

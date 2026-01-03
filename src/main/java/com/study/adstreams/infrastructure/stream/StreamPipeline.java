@@ -15,9 +15,13 @@ import org.springframework.kafka.support.serializer.JsonSerde;
  * Kafka Streams 파이프라인 구성
  * DDD/EDA 아키텍처의 Infrastructure 계층에서 스트림 처리 로직을 정의
  */
-@Slf4j
-@Configuration
-@RequiredArgsConstructor
+/**
+ * 기존 StreamPipeline - 새로운 토폴로지로 대체됨
+ * PartnerBillingTopology, PartnerGroupMetricsTopology, DisplayMetricsTopology 참조
+ */
+// @Slf4j
+// @Configuration
+// @RequiredArgsConstructor
 public class StreamPipeline {
 
     @Value("${spring.kafka.streams.input-topic:input-topic}")
