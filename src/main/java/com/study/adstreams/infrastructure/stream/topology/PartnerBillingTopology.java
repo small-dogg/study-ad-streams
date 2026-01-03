@@ -49,20 +49,20 @@ public class PartnerBillingTopology {
             Consumed.with(Serdes.String(), new JsonSerde<>(ClickEvent.class))
         );
 
-        // 키 변환: partnerId, displayTarget, displayId, productId 조합
-        KStream<ClickAggregationKey, ClickEvent> keyedStream = clickStream
+        // 키 변환: partnerId, displayTarget, displayId, productId 조합 (문자열 키로 단순화)
+        KStream<String, ClickEvent> keyedStream = clickStream
             .selectKey((key, clickEvent) -> new ClickAggregationKey(
                 clickEvent.getPartnerId(),
                 clickEvent.getDisplayTarget(),
                 clickEvent.getDisplayId(),
                 clickEvent.getProductId()
-            ));
+            ).toKeyString());
 
         // 1분 Tumbling Window로 집계 (클릭 수와 금액 추적)
         TimeWindows tumblingWindow = TimeWindows.ofSizeWithNoGrace(Duration.ofMinutes(1));
 
-        KTable<Windowed<ClickAggregationKey>, ClickAggregationState> aggregatedByKey = keyedStream
-            .groupByKey(Grouped.with(new JsonSerde<>(ClickAggregationKey.class), new JsonSerde<>(ClickEvent.class)))
+        KTable<Windowed<String>, ClickAggregationState> aggregatedByKey = keyedStream
+            .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(ClickEvent.class)))
             .windowedBy(tumblingWindow)
             .aggregate(
                 ClickAggregationState::new,
@@ -71,7 +71,7 @@ public class PartnerBillingTopology {
                     state.addClick(amount);
                     return state;
                 },
-                Materialized.with(new JsonSerde<>(ClickAggregationKey.class), new JsonSerde<>(ClickAggregationState.class))
+                Materialized.with(Serdes.String(), new JsonSerde<>(ClickAggregationState.class))
             )
             .suppress(
                 Suppressed.untilWindowCloses(BufferConfig.unbounded())
@@ -85,7 +85,8 @@ public class PartnerBillingTopology {
                 (windowedKey, state) -> {
                     // 파트너 ID와 윈도우 시작 시간을 키로 사용
                     long windowStart = windowedKey.window().start();
-                    return windowedKey.key().getPartnerId() + ":" + windowStart;
+                    String[] keyParts = windowedKey.key().split(":");
+                    return keyParts[0] + ":" + windowStart;
                 },
                 Grouped.with(Serdes.String(), new JsonSerde<>(ClickAggregationState.class))
             )
