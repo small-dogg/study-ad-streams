@@ -10,6 +10,7 @@ import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
+import org.apache.kafka.streams.kstream.Suppressed.BufferConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,8 +20,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * 파트너별 과금목적 집계 토폴로지
@@ -73,6 +72,10 @@ public class PartnerBillingTopology {
                     return state;
                 },
                 Materialized.with(new JsonSerde<>(ClickAggregationKey.class), new JsonSerde<>(ClickAggregationState.class))
+            )
+            .suppress(
+                Suppressed.untilWindowCloses(BufferConfig.unbounded())
+                    .withName("suppress-click-aggregation")
             );
 
         // 파트너별로 재집계 (윈도우 정보 유지)
@@ -98,6 +101,10 @@ public class PartnerBillingTopology {
                     return partnerState;
                 },
                 Materialized.with(Serdes.String(), new JsonSerde<>(PartnerBillingAggregationState.class))
+            )
+            .suppress(
+                Suppressed.untilWindowCloses(BufferConfig.unbounded())
+                    .withName("suppress-partner-billing-aggregation")
             )
             .toStream()
             .map((windowedKey, state) -> {

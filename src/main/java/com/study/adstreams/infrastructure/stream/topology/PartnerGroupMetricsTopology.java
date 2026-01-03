@@ -11,6 +11,7 @@ import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
+import org.apache.kafka.streams.kstream.Suppressed.BufferConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -80,13 +81,21 @@ public class PartnerGroupMetricsTopology {
         KTable<Windowed<String>, Long> impressionCounts = keyedImpressionStream
             .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(ImpressionEvent.class)))
             .windowedBy(tumblingWindow)
-            .count();
+            .count()
+            .suppress(
+                Suppressed.untilWindowCloses(BufferConfig.unbounded())
+                    .withName("suppress-impression-counts")
+            );
 
         // Click 집계 (카운트)
         KTable<Windowed<String>, Long> clickCounts = keyedClickStream
             .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(ClickEvent.class)))
             .windowedBy(tumblingWindow)
-            .count();
+            .count()
+            .suppress(
+                Suppressed.untilWindowCloses(BufferConfig.unbounded())
+                    .withName("suppress-click-counts")
+            );
 
         // 부정클릭 집계: 1분 윈도우로 부정클릭 판단 후 5분 윈도우로 재집계
         // 키: partnerId:groupId:displayTarget:displayId:productId
@@ -105,6 +114,10 @@ public class PartnerGroupMetricsTopology {
                     return state;
                 },
                 Materialized.with(Serdes.String(), new JsonSerde<>(ClickAggregationState.class))
+            )
+            .suppress(
+                Suppressed.untilWindowCloses(BufferConfig.unbounded())
+                    .withName("suppress-fraudulent-click-1min")
             )
             .toStream()
             .filter((windowedKey, state) -> state.getFraudulentAmount() > 0)
@@ -125,10 +138,14 @@ public class PartnerGroupMetricsTopology {
                     return aggregate;
                 },
                 Materialized.with(Serdes.String(), new JsonSerde<>(FraudulentClickState.class))
+            )
+            .suppress(
+                Suppressed.untilWindowCloses(BufferConfig.unbounded())
+                    .withName("suppress-fraudulent-click-5min")
             );
 
         // 윈도우 정보를 키에 포함시켜 스트림으로 변환 후 조인
-        KStream<String, PartnerGroupMetrics> resultStream = impressionCounts
+        KStream<String, Map<String, Object>> impressionDataStream = impressionCounts
             .toStream()
             .map((windowedKey, impressionCount) -> {
                 String keyWithWindow = windowedKey.key() + ":" + windowedKey.window().start();
@@ -137,14 +154,20 @@ public class PartnerGroupMetricsTopology {
                 data.put("key", windowedKey.key());
                 data.put("windowStart", windowedKey.window().start());
                 return KeyValue.pair(keyWithWindow, data);
-            })
+            });
+
+        KStream<String, Map<String, Object>> clickDataStream = clickCounts
+            .toStream()
+            .map((windowedKey, clickCount) -> {
+                String keyWithWindow = windowedKey.key() + ":" + windowedKey.window().start();
+                Map<String, Object> data = new HashMap<>();
+                data.put("click", clickCount);
+                return KeyValue.pair(keyWithWindow, data);
+            });
+
+        KStream<String, PartnerGroupMetrics> resultStream = impressionDataStream
             .leftJoin(
-                clickCounts.toStream().map((windowedKey, clickCount) -> {
-                    String keyWithWindow = windowedKey.key() + ":" + windowedKey.window().start();
-                    Map<String, Object> data = new HashMap<>();
-                    data.put("click", clickCount);
-                    return KeyValue.pair(keyWithWindow, data);
-                }),
+                clickDataStream,
                 (impressionData, clickData) -> {
                     Map<String, Object> merged = new HashMap<>();
                     if (impressionData != null) {
@@ -157,7 +180,7 @@ public class PartnerGroupMetricsTopology {
                     }
                     return merged;
                 },
-                Joined.with(Serdes.String(), new JsonSerde<>(Map.class), new JsonSerde<>(Map.class))
+                JoinWindows.ofTimeDifferenceWithNoGrace(Duration.ofMinutes(5))
             )
             .leftJoin(
                 fraudulentClicks.toStream().map((windowedKey, fraudulentState) -> {
@@ -165,14 +188,12 @@ public class PartnerGroupMetricsTopology {
                     return KeyValue.pair(keyWithWindow, fraudulentState);
                 }),
                 (metricsData, fraudulentState) -> {
-                    if (metricsData == null) {
-                        metricsData = new HashMap<>();
-                    }
-                    metricsData.put("fraudulentClickCount", fraudulentState != null ? fraudulentState.getFraudulentClickCount() : 0L);
-                    metricsData.put("fraudulentAmount", fraudulentState != null ? fraudulentState.getFraudulentAmount() : 0L);
-                    return metricsData;
+                    Map<String, Object> result = metricsData != null ? new HashMap<>(metricsData) : new HashMap<>();
+                    result.put("fraudulentClickCount", fraudulentState != null ? fraudulentState.getFraudulentClickCount() : 0L);
+                    result.put("fraudulentAmount", fraudulentState != null ? fraudulentState.getFraudulentAmount() : 0L);
+                    return result;
                 },
-                Joined.with(Serdes.String(), new JsonSerde<>(Map.class), new JsonSerde<>(FraudulentClickState.class))
+                JoinWindows.ofTimeDifferenceWithNoGrace(Duration.ofMinutes(5))
             )
             .map((keyWithWindow, data) -> {
                 String[] parts = keyWithWindow.split(":");
